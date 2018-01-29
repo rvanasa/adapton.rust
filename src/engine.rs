@@ -40,8 +40,9 @@ use std::mem::replace;
 use std::mem::transmute;
 use std::rc::Rc;
 use std::fmt::Write;
+use std::ops;
 
-use macros::{ProgPt};
+use macros::{ProgPt, bump_name_counter};
 use reflect;
 
 thread_local!(static GLOBALS: RefCell<Globals> = RefCell::new(Globals{engine:Engine::Naive}));
@@ -1890,6 +1891,64 @@ trait Force<T> {
   fn hash_u64(self:&Self) -> u64;
   fn fmt(&self, f:&mut Formatter) -> fmt::Result;
 }
+
+macro_rules! unop_impl {
+  ($op_type:ident, $op_fn:ident) => {
+    impl<T:ops::$op_type+Hash+Clone+Eq+Debug+'static> ops::$op_type for Art<T>
+    where T::Output:Hash+Clone+Eq+Debug+'static {
+      type Output = Art<T::Output>;
+      fn $op_fn(self) -> Self::Output {
+        // Stand-in deterministic naming scheme
+        let name = name_of_string(format!("{}{}",
+          stringify!($op_fn),
+          my_hash(self.clone()),
+        ));
+        thunk![ name =>> get!(self).$op_fn() ]
+      }
+    }
+  };
+}
+
+macro_rules! binop_impl {
+  ($op_type:ident, $op_fn:ident) => {
+    impl<T:ops::$op_type<U>+Hash+Clone+Eq+Debug+'static, U:Hash+Clone+Eq+Debug+'static> ops::$op_type<Art<U>> for Art<T>
+    where T::Output:Hash+Clone+Eq+Debug+'static {
+      type Output = Art<T::Output>;
+      fn $op_fn(self, other: Art<U>) -> Self::Output {
+        let name = name_of_string(format!("{}{}{}",
+          stringify!($op_fn),
+          my_hash(self.clone()),
+          my_hash(other.clone()),
+        ));
+        thunk![ name =>> get!(self).$op_fn(get!(other)) ]
+      }
+    }
+  };
+}
+
+unop_impl!(Neg, neg);
+unop_impl!(Not, not);
+
+binop_impl!(Add, add);
+binop_impl!(Sub, sub);
+binop_impl!(Mul, mul);
+binop_impl!(Div, div);
+binop_impl!(Rem, rem);
+binop_impl!(Shl, shl);
+binop_impl!(Shr, shr);
+binop_impl!(BitAnd, bitand);
+binop_impl!(BitOr, bitor);
+binop_impl!(BitXor, bitxor);
+
+// binop_impl!(Index, index);
+// binop_impl!(Fn, call);
+
+// impl<T:Sized+Hash+Clone+Eq+Debug+'static> ops::Deref for Art<T> {
+//   type Target = T;
+//   fn deref(&self) -> &Self::Target {
+//     &force(self)
+//   }
+// }
 
 #[derive(Clone)]
 struct NaiveThunk<Arg, Spurious, Res> {
